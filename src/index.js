@@ -1,11 +1,11 @@
 require('dotenv').config();
+
 const http = require("http");
 const fs = require("fs");
+const url = require('url');
 var requests = require("requests");
 
-
 const homeFile = fs.readFileSync("home.html", "utf-8");
-
 
 const replaceVal = (tempVal, orgVal) => {
   let temperature = tempVal.replace("{%tempval%}", orgVal.main.temp);
@@ -19,24 +19,41 @@ const replaceVal = (tempVal, orgVal) => {
 };
 
 const server = http.createServer((req, res) => {
-  if (req.url == "/") {
-    requests(
-      `http://api.openweathermap.org/data/2.5/weather?q=Pune&units=metric&appid=${process.env.APPID}`
-    )
+  const queryObject = url.parse(req.url, true).query;
+  const cities = queryObject.city ? queryObject.city.split(',') : ['Pune']; // Default to Pune if no city is provided
+
+  if (req.url.startsWith("/")) {
+    let weatherData = '';
+    let requestsCount = 0;
+
+    cities.forEach(city => {
+      requests(
+        `http://api.openweathermap.org/data/2.5/weather?q=${city.trim()}&units=metric&appid=${process.env.APPID}`
+      )
       .on("data", (chunk) => {
         const objdata = JSON.parse(chunk);
-        const arrData = [objdata];
-        // console.log(arrData[0].main.temp);
-        const realTimeData = arrData
-          .map((val) => replaceVal(homeFile, val))
-          .join("");
-        res.write(realTimeData);
-        // console.log(realTimeData);
+        if (objdata.cod !== 200) {
+          weatherData += `<div>Error: ${objdata.message} for ${city.trim()}</div>`;
+        } else {
+          const arrData = [objdata];
+          weatherData += arrData.map((val) => replaceVal(homeFile, val)).join("");
+        }
+      })
+      .on("error", (err) => {
+        console.log("Request error: ", err);
+        weatherData += `<div>Error fetching data for ${city.trim()}</div>`;
       })
       .on("end", (err) => {
-        if (err) return console.log("connection closed due to errors", err);
-        res.end();
+        requestsCount++;
+        if (err) {
+          console.log("Connection closed due to errors", err);
+        }
+        if (requestsCount === cities.length) {
+          res.write(weatherData);
+          res.end();
+        }
       });
+    });
   } else {
     res.end("File not found");
   }
